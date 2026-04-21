@@ -1,3 +1,8 @@
+.DS_Store
+*nimcache*/
+deps/
 nimcache/
-nimblecache/
-htmldocs/
+testresults/
+__pycache__/
+*.pyc
+*.exe

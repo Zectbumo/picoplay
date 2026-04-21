@@ -1,463 +1,388 @@
 # picoplay
 
-**picoplay** is a LAN multiplayer system with an authoritative Nim server and ultra-thin MicroPython clients (Raspberry Pi Pico 2 W).
+**picoplay** is a LAN multiplayer system with an authoritative Nim server and MicroPython clients running on Raspberry Pi Pico 2 W hardware.
 
-The server owns all game logic, assets, and frame rendering decisions. Clients act as simple input/output devices: they render exactly what the server tells them and report input state after each frame.
+The server owns simulation, player assignment, and asset distribution. Clients handle Wi-Fi, discovery, asset caching, rendering, local I/O, and connection status display.
 
-This project is intentionally minimal (MVP) and optimized for simplicity, determinism, and low overhead.
-
----
-
-# Core Principles
-
-- Server is fully authoritative
-- Clients are “dumb terminals”
-- No security, no validation, no compression (trusted LAN)
-- Fixed binary protocol (no dynamic schemas)
-- No delta frames or prediction
-- Full frame sent every tick (KISS)
-- Up to 4 players
-- Target: 60 FPS
+The design goal is a simple LAN system with a fixed binary protocol and minimal moving parts.
 
 ---
 
-# System Overview
+# Principles
 
-## Server (Nim)
+- Server is authoritative
+- Clients stay thin and deterministic
+- `TCP` handles control and asset transfer
+- `UDP` handles discovery and per-client frame state delivery
+- Rendering and hardware I/O stay behind small client-side interfaces
+- No security, compression, dynamic schemas, rollback, or prediction
 
-Responsibilities:
+---
 
-- Broadcast presence via UDP beacon (1s interval)
-- Accept TCP connections
-- Assign players (1–4)
-- Maintain authoritative game state
-- Manage asset catalog
-- Synchronize assets to clients
-- Build and send full frame commands every tick
-- Receive input snapshots from clients
+# Runtime
 
-## Client (MicroPython, Pico 2 W)
+## Server
 
-Responsibilities:
+- Broadcast a UDP beacon every 1 second
+- Accept TCP control connections
+- Issue a client UUID when a client does not already have one
+- Assign player IDs
+- Send the asset manifest and asset data over TCP
+- Receive input snapshots over TCP
+- Simulate game state at configurable `tick_hz`
+- Send the latest frame state over UDP to each client
+
+## Client
 
 - Connect to Wi-Fi
-- Discover servers via UDP beacon
-- Auto-select or present server selection UI
-- Maintain local asset cache
-- Download assets from server
-- Render frame commands exactly as received
-- Drive outputs:
-  - LCD display
-  - 2 LEDs
-  - RGB neopixel
-  - PWM buzzer
-- Sample inputs:
-  - Joystick (X, Y)
-  - Button A, Button B
-- Send one input snapshot per rendered frame
-- Reconnect automatically on disconnect
+- Find servers from UDP beacons
+- Open a TCP control session
+- Sync local assets from the server
+- Listen for UDP frame state updates
+- Render the newest state immediately
+- Read local input and send snapshots over TCP
+- Reclaim the same player ID if reconnect happens within 5 seconds
+- Reconnect automatically after disconnect
 
 ---
 
-# Network Model
+# Client Status Flow
 
-## Discovery
+The Pico should visibly report its startup and reconnect state:
 
-- UDP broadcast beacon every **1 second**
+1. `CONNECTING_WIFI`
+2. `FINDING_BEACON`
+3. `SYNCING_ASSETS`
+4. `READY`
+5. `DISCONNECTED`
 
-## Session / Runtime
+Expected behavior:
 
-- TCP only
-- No UDP gameplay traffic
+- Wi-Fi screen shows SSID and retry state
+- Beacon screen shows scan progress and the most recent discovered session
+- Asset sync screen shows counts or bytes downloaded
+- Ready state shows game output
+- Disconnect state shows reconnect progress and falls back through the same flow
 
-## Reconnect Behavior
+---
 
-- Immediate reconnect attempt on disconnect
-- Then retry every **1 second**
-- Stop reconnecting if beacon indicates incompatible version
+# Client Platform
+
+The client should be library agnostic at the architecture level. It needs two interfaces.
+
+## Renderer
+
+A renderer backend should be able to:
+
+- initialize hardware
+- clear the screen
+- draw rectangles
+- draw text
+- draw images or atlas regions
+
+## Hardware I/O
+
+A hardware backend should be able to:
+
+- read joystick X/Y
+- read button A and button B
+- set indicator outputs
+- set neopixel color
+- start and stop buzzer tones
+
+Any display/input library can be used if it satisfies those interfaces.
+
+---
+
+# Working Pico Implementation
+
+The initial Pico implementation can use `lib/lcd.py` for the concrete display and input bindings while keeping the higher-level client code abstracted behind renderer and I/O adapters.
+
+Useful mappings from `lib/lcd.py`:
+
+- `lcd_init()` for display setup
+- `lcd_clear()` for full-screen clear
+- `lcd_set_color()` and `lcd_fill()` for filled rectangles
+- `lcd_draw_text()` for status and game text
+- `lcd_blit_file()` for image blits
+- `lcd_rgb_led()` for neopixel output
+- `lcd_start_tone()` and `lcd_stop_tone()` for buzzer control
+- `joy_x`, `joy_y`, `button_a`, and `button_b` for local inputs
+
+This gives a complete working Pico client without making the overall platform depend on that module.
 
 ---
 
 # Identity
 
-## UUIDs
+- Server has a persistent UUID
+- Client has a persistent UUID stored locally
+- Each TCP session has its own session UUID
 
-- Server has permanent UUID
-- Client has permanent UUID (stored locally)
-- Session has UUID (per connection)
+If a client has no UUID:
 
-UUIDs are **not used in high-frequency packets**
+1. Open TCP control without a UUID
+2. Receive a server-issued client UUID
+3. Store it locally
+4. Continue the same session with that UUID
 
-## Client UUID Generation
+UUIDs are not used in UDP frame state packets.
 
-If client has no UUID:
-
-1. Client connects without UUID
-2. Server sends current time
-3. Client generates UUID using:
-   - server time
-   - MAC address (if available)
-   - random entropy
-4. Client stores UUID locally
-5. Client reconnects
+If a client disconnects unexpectedly, its player ID remains reserved for 5 seconds before being released.
 
 ---
 
-# Discovery Protocol (Beacon)
+# Discovery
 
-Broadcast every 1 second.
+The server broadcasts a UDP beacon every 1 second.
 
-## Fields
+Beacon fields:
 
-- `protocol_version` (u16)
-- `game_version` (u16)
-- `server_uuid` (16 bytes)
-- `tcp_port` (u16)
+- `magic` (`4 bytes`)
+- `protocol_version` (`u16`)
+- `server_uuid` (`16 bytes`)
+- `session_uuid` (`16 bytes`)
+- `tcp_port` (`u16`)
+- `udp_port` (`u16`)
 - `server_name` (string)
-- `game_title` (string)
 
-## Compatibility Rules
+Client accepts a beacon only if `magic` and `protocol_version` both match.
 
-Client accepts a server only if:
+Selection behavior:
 
-- protocol_version matches
-- game_version matches
-- game_title matches
-
-## Selection Logic
-
-- Start 1010 ms timer on first beacon
-- If **1 compatible server** → auto-select
-- If **multiple** → show selection UI
-- No persistence of preferred server
+- Start a 1010 ms timer after the first compatible beacon
+- Auto-select if there is exactly one discovered session
+- Show selection UI if there are multiple discovered sessions
 
 ---
 
-# Asset System
+# Asset Sync
 
-## Server is Source of Truth
+The server is the source of truth for assets.
 
-Clients must match server asset catalog exactly.
+Each asset has:
 
-## Asset Identity
+- `asset_id` (`u16`)
+- `asset_type` (`u8`)
+- `mod_time` (`u64`)
+- `size_bytes` (`u32`)
 
-Each asset:
+Atlas entries use:
 
-- `asset_id` (u16)
-- `asset_type` (u8)
-- `mod_time` (u64)
-- `size_bytes` (u32)
+- `asset_id` (`u16`)
+- `atlas_index` (`u16`)
 
-## Atlas Support
+Use `asset manifest` as the single term for the list of assets and their metadata.
 
-- `asset_id` (u16)
-- `atlas_index` (u16)
+Sync flow over TCP:
 
-## Sync Process
+1. Server sends the asset manifest
+2. Client deletes local assets not in the asset manifest
+3. Client deletes assets with mismatched `mod_time`
+4. Client downloads required assets one at a time
+5. Client updates the local asset manifest
+6. Client enters `READY`
 
-On connect:
+Storage layout:
 
-1. Server sends BOM (bill of materials)
-2. Client:
-   - deletes all local assets not in BOM
-   - deletes assets with mismatched `mod_time`
-3. Client downloads required assets (one at a time)
-4. No checksum
-5. No resume
-6. No chunking
-
----
-
-# Client Storage Layout
-
-```
+```text
 /config.dat
 /client_uuid.txt
 /assets/
-/assets/catalog.dat
+/assets/manifest.dat
 /assets/<asset_id>.bin
 ```
 
 ---
 
-# Runtime Model
-
-## Server Loop (60 FPS)
-
-Each tick:
-
-1. Read latest input per player
-2. Update game state
-3. Build frame commands
-4. Send full frame to each client
-
-## Client Loop
-
-1. Receive frame
-2. Render immediately
-3. Apply outputs (LEDs, buzzer, etc.)
-4. Sample input
-5. Send input snapshot
-6. Repeat
-
----
-
 # Protocol
 
-## Transport
+Transport split:
 
-- TCP
-- Binary packets
-- Fixed layout (struct-compatible)
+- `UDP`: beacon discovery and per-client frame state delivery
+- `TCP`: handshake, asset sync, input, and session control
 
-## Packet Framing
+TCP packet framing:
 
-```
+```text
 packet_type: u8
 payload_length: u16
 payload_bytes
 ```
 
+UDP packets use fixed binary layouts without stream framing.
+
+## Client -> Server (`TCP`)
+
+### `ClientHello`
+
+- `client_uuid_present` (`u8`)
+- `client_uuid` (`16 bytes`, if present)
+
+### `InputSnapshot`
+
+- `joystick_x` (`i16`)
+- `joystick_y` (`i16`)
+- `button_a` (`u8`)
+- `button_b` (`u8`)
+
+## Server -> Client (`TCP`)
+
+### `ServerHello`
+
+- `client_uuid` (`16 bytes`)
+- `session_uuid` (`16 bytes`)
+- `game_version` (`u16`)
+- `game_title` (string)
+- `tick_hz` (`u16`)
+- `player_id` (`u8`)
+- `udp_port` (`u16`)
+
+### `AssetManifest`
+
+- `asset_count` (`u16`)
+- repeated asset entries:
+  - `asset_id` (`u16`)
+  - `asset_type` (`u8`)
+  - `mod_time` (`u64`)
+  - `size_bytes` (`u32`)
+
+### `AssetData`
+
+- `asset_id` (`u16`)
+- `mod_time` (`u64`)
+- `size_bytes` (`u32`)
+- raw asset bytes
+
+## Server -> Client (`UDP`)
+
+### `Beacon`
+
+- `magic` (`4 bytes`)
+- `protocol_version` (`u16`)
+- `server_uuid` (`16 bytes`)
+- `session_uuid` (`16 bytes`)
+- `tcp_port` (`u16`)
+- `udp_port` (`u16`)
+- `server_name` (string)
+
+### `FrameState`
+
+- `state_sequence` (`u32`)
+- `draw_count` (`u16`)
+- draw commands
+- `led1` (`u8`)
+- `led2` (`u8`)
+- `neopixel_r` (`u8`)
+- `neopixel_g` (`u8`)
+- `neopixel_b` (`u8`)
+- `buzzer_mode` (`u8`)
+- `buzzer_freq_hz` (`u16`)
+- `buzzer_duty` (`u16`)
+
+The client keeps only the newest `FrameState` packet and may drop older or out-of-order packets.
+
+## Draw Commands
+
+### `DrawImage`
+
+- `asset_id` (`u16`)
+- `x` (`i16`)
+- `y` (`i16`)
+
+### `DrawAtlas`
+
+- `asset_id` (`u16`)
+- `atlas_index` (`u16`)
+- `x` (`i16`)
+- `y` (`i16`)
+
+### `FillRect`
+
+- `x` (`i16`)
+- `y` (`i16`)
+- `w` (`u16`)
+- `h` (`u16`)
+- `color` (`u32`)
+
+### `DrawText`
+
+- `x` (`i16`)
+- `y` (`i16`)
+- `color` (`u32`)
+- `text_id` or inline string
+
 ---
 
-# Packet Types
+# Input And Outputs
 
-## Client → Server
+Client sends one `InputSnapshot` per local loop iteration over TCP.
 
-### ClientHello
+Frame state updates carry output state for:
 
-- `client_uuid_present` (u8)
-- `client_uuid` (16 bytes if present)
-
----
-
-### InputSnapshot
-
-- `joystick_x` (i16)
-- `joystick_y` (i16)
-- `button_a` (u8)
-- `button_b` (u8)
-
----
-
-## Server → Client
-
-### TimeSeed
-
-- `unix_time` (u64)
-
----
-
-### ServerHello
-
-- `session_uuid` (16 bytes)
-- `player_number` (u8)
-
----
-
-### AssetBom
-
-- `asset_count` (u16)
-- repeated:
-  - `asset_id` (u16)
-  - `asset_type` (u8)
-  - `mod_time` (u64)
-  - `size_bytes` (u32)
-
----
-
-### AssetData
-
-- `asset_id` (u16)
-- `mod_time` (u64)
-- `size_bytes` (u32)
-- raw bytes follow
-
----
-
-### StartGame
-
-- no payload
-
----
-
-### Frame
-
-- `draw_count` (u16)
-- draw commands...
-- `led1` (u8)
-- `led2` (u8)
-- `neopixel_r` (u8)
-- `neopixel_g` (u8)
-- `neopixel_b` (u8)
-- `buzzer_mode` (u8)
-- `buzzer_freq_hz` (u16)
-- `buzzer_duty` (u16)
-
----
-
-# Draw Commands
-
-Executed in order (implicit Z-order).
-
-## DrawImage
-
-- `asset_id` (u16)
-- `x` (i16)
-- `y` (i16)
-
-## DrawAtlas
-
-- `asset_id` (u16)
-- `atlas_index` (u16)
-- `x` (i16)
-- `y` (i16)
-
-## FillRect
-
-- `x` (i16)
-- `y` (i16)
-- `w` (u16)
-- `h` (u16)
-- `color` (u16/u32)
-
----
-
-# Outputs (per frame)
-
-- LED1, LED2
+- indicator LEDs
 - RGB neopixel
-- PWM buzzer (mode, frequency, duty)
+- buzzer mode, frequency, and duty
 
 ---
 
-# Input Model
+# Project Shape
 
-Client sends exactly one snapshot per frame:
-
-- joystick X/Y
-- button A/B
-
-No timestamps  
-No sequence IDs  
-No frame IDs  
-
----
-
-# Server Architecture (Nim)
-
-```
+```text
 server/
   src/
     main.nim
     config.nim
-    uuid_util.nim
     beacon.nim
-    tcp_server.nim
-    session_manager.nim
-    asset_catalog.nim
-    asset_sync.nim
-    protocol_encode.nim
-    protocol_decode.nim
-    game/
-      game_state.nim
-      game_rules.nim
-      frame_builder.nim
-    runtime/
-      loop.nim
-```
+    network.nim
+    assets.nim
+    protocol.nim
+    game.nim
 
----
-
-# Client Architecture (MicroPython)
-
-```
 client/
   boot.py
   main.py
   config.py
-  uuid_util.py
   wifi.py
   beacon.py
-  select_server.py
-  tcp_client.py
-  asset_store.py
-  asset_sync.py
-  render.py
-  display_driver.py
-  input.py
-  output.py
+  network.py
+  assets.py
+  protocol.py
+  platform/
+    renderer.py
+    io.py
+    lcd_backend.py
 ```
 
 ---
 
-# Sample MVP Game
+# Sample Game
 
-Minimal validation game:
-
-- 4 players
+- up to 4 players
 - top-down movement
 - joystick controls movement
-- button A triggers sound/flash
+- button A triggers sound or flash
 - button B changes color
-- server sends full frame every tick
 
 ---
 
-# Non-Goals (MVP)
+# Not Included
 
-Not included:
-
-- security
-- encryption
-- validation
-- internet play
-- NAT traversal
+- security or encryption
+- internet play or NAT traversal
 - compression
-- delta frames
-- keyframes
-- asset checksums
-- resumable downloads
+- reliable UDP
+- delta updates
+- rollback or prediction
+- resumable asset downloads
 - capability negotiation
-- preferred server storage
-- interpolation
-- prediction
-
----
-
-# Implementation Order
-
-1. Protocol definitions
-2. Beacon (server + client)
-3. TCP handshake + player assignment
-4. UUID generation flow
-5. Asset BOM + purge
-6. Asset download
-7. Frame packet + renderer
-8. Input snapshot
-9. Game loop (server)
-10. Reconnect logic
-11. Sample game
 
 ---
 
 # Summary
 
-picoplay is designed to be:
+`picoplay` is a server-authoritative LAN game system with:
 
-- extremely simple
-- deterministic
-- easy to implement on constrained hardware
-- easy to reason about
-
-The system trades bandwidth efficiency for clarity and reliability, making it ideal for LAN-based embedded multiplayer systems.
-
----
-
-# Optimization Notes
-
-- Use `struct.pack_into` / `unpack_from` on MicroPython to avoid allocations
-- Preallocate buffers for frame parsing
-- Avoid building intermediate objects when rendering
-- Keep asset IDs stable across builds using a manifest
-
+- `TCP` for control, assets, and input
+- `UDP` for discovery and per-client realtime frame state delivery
+- a Pico client that shows connection status, syncs assets, renders server-driven state, and reports local input
