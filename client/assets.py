@@ -10,12 +10,15 @@ import protocol
 
 
 def _ensure_asset_dir():
-    os.makedirs(config.ASSET_DIR, exist_ok=True)
+    try:
+        os.mkdir(config.ASSET_DIR)
+    except OSError:
+        pass
 
 
 def load_manifest():
     try:
-        with open(config.ASSET_MANIFEST_PATH, "r", encoding="utf-8") as handle:
+        with open(config.ASSET_MANIFEST_PATH, "r") as handle:
             return json.load(handle)
     except OSError:
         return []
@@ -23,12 +26,12 @@ def load_manifest():
 
 def save_manifest(manifest):
     _ensure_asset_dir()
-    with open(config.ASSET_MANIFEST_PATH, "w", encoding="utf-8") as handle:
+    with open(config.ASSET_MANIFEST_PATH, "w") as handle:
         json.dump(manifest, handle)
 
 
 def _asset_path(asset_id):
-    return os.path.join(config.ASSET_DIR, "%s.bin" % asset_id)
+    return "%s/%s.bin" % (config.ASSET_DIR, asset_id)
 
 
 def sync_from_control_socket(sock, status_cb=None):
@@ -47,7 +50,7 @@ def sync_from_control_socket(sock, status_cb=None):
             continue
         asset_id = int(entry.split(".", 1)[0])
         if asset_id not in expected_ids:
-            os.remove(os.path.join(config.ASSET_DIR, entry))
+            os.remove("%s/%s" % (config.ASSET_DIR, entry))
 
     for index, entry in enumerate(manifest, start=1):
         packet_type, payload = protocol.recv_packet(sock)

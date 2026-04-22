@@ -26,7 +26,7 @@ def connect(status_cb=None, ssid=None, password=None, timeout_s=15):
         return {"connected": True, "ip": wlan.ifconfig()[0]}
 
     if not ssid:
-        raise RuntimeError("WIFI_SSID is not configured")
+        raise RuntimeError("Wi-Fi credentials are not configured in secrets.py")
 
     wlan.connect(ssid, password)
     start = _time.time()

@@ -6,3 +6,6 @@ testresults/
 __pycache__/
 *.pyc
 *.exe
+client/secrets.py
+examples/
+server/server_uuid.txt

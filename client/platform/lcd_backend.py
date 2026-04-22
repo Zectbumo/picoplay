@@ -1,22 +1,18 @@
-import os
-import sys
-
-from platform.renderer import Renderer
-from platform.io import HardwareIO
+try:
+    from .renderer import Renderer
+    from .io import HardwareIO
+except ImportError:
+    from renderer import Renderer
+    from io import HardwareIO
 
 
 def _load_lcd_module():
-    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-    lib_dir = os.path.join(repo_root, "lib")
-    if lib_dir not in sys.path:
-        sys.path.append(lib_dir)
-
     try:
-        from lib import lcd as lcd_module  # type: ignore
+        import lcd as lcd_module  # type: ignore
         return lcd_module
     except Exception:
         try:
-            import lcd as lcd_module  # type: ignore
+            from lib import lcd as lcd_module  # type: ignore
             return lcd_module
         except Exception:
             return None

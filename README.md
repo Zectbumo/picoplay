@@ -356,6 +356,32 @@ client/
 
 ---
 
+# Server Build And Run
+
+From the repo root:
+
+Debug build:
+
+```powershell
+nim c --threads:on --out:server/picoplay_server.exe server/src/main.nim
+```
+
+Release build:
+
+```powershell
+nim c -d:release --threads:on --out:server/picoplay_server.exe server/src/main.nim
+```
+
+Run the server:
+
+```powershell
+.\server\picoplay_server.exe
+```
+
+The server stores its generated UUID in `server/server_uuid.txt` and serves assets from `server/assets/`.
+
+---
+
 # Sample Game
 
 - up to 4 players
