@@ -17,6 +17,16 @@ def _sleep(seconds):
         time.sleep_ms(int(seconds * 1000))
 
 
+def _set_status_wifi_message(status_display, ssid):
+    if hasattr(status_display, "set_wifi_message"):
+        status_display.set_wifi_message(ssid)
+        return
+
+    # Allow older StatusDisplay implementations that only expose the backing
+    # attribute so the connection loop still runs on partially updated clients.
+    status_display.wifi_message = "connected %s" % ssid if ssid else "not connected"
+
+
 def run():
     renderer = LcdRenderer()
     io_backend = LcdHardwareIO()
@@ -27,40 +37,55 @@ def run():
         status_display.show(state, detail)
 
     while True:
-        connection = None
         try:
-            wifi.connect(status_cb=status_cb)
-            sessions = beacon.discover(status_cb=status_cb)
-            if not sessions:
-                raise RuntimeError("no session discovered")
-
-            selected = sessions[0]
-            status_cb("FINDING_BEACON", selected["server_name"])
-            connection = network.open_session(selected, status_cb=status_cb)
-            status_cb("READY", "player %d" % connection.server_hello["player_id"])
-
-            while True:
-                frame = connection.recv_frame(timeout_ms=100)
-                if frame is not None:
-                    renderer.clear(0x000000)
-                    for command in frame["commands"]:
-                        kind = command["kind"]
-                        if kind == "fill_rect":
-                            renderer.fill_rect(command["x"], command["y"], command["w"], command["h"], command["color"])
-                        elif kind == "draw_text":
-                            renderer.draw_text(command["x"], command["y"], command["text"], command["color"])
-                    renderer.present()
-                    io_backend.apply_outputs(frame["outputs"])
-
-                connection.send_input(io_backend.read_input())
+            wifi_info = wifi.connect(status_cb=status_cb)
+            _set_status_wifi_message(status_display, wifi_info.get("ssid", ""))
         except Exception as exc:
             status_cb("DISCONNECTED", str(exc))
-            if connection is not None:
-                try:
-                    connection.close()
-                except Exception:
-                    pass
             _sleep(config.RECONNECT_DELAY_S)
+            continue
+
+        while True:
+            connection = None
+            try:
+                sessions = beacon.discover(status_cb=status_cb)
+                if not sessions:
+                    continue
+                if len(sessions) != 1:
+                    _sleep(config.RECONNECT_DELAY_S)
+                    continue
+
+                selected = sessions[0]
+                connection = network.open_session(selected, status_cb=status_cb)
+                status_cb("READY", "player %d" % connection.server_hello["player_id"])
+
+                while True:
+                    frame = connection.recv_frame(timeout_ms=100)
+                    if frame is not None:
+                        renderer.clear(0x000000)
+                        for command in frame["commands"]:
+                            kind = command["kind"]
+                            if kind == "fill_rect":
+                                renderer.fill_rect(command["x"], command["y"], command["w"], command["h"], command["color"])
+                            elif kind == "draw_text":
+                                renderer.draw_text(command["x"], command["y"], command["text"], command["color"])
+                        renderer.present()
+                        io_backend.apply_outputs(frame["outputs"])
+
+                    connection.send_input(io_backend.read_input())
+            except Exception as exc:
+                status_cb("DISCONNECTED", str(exc))
+                if connection is not None:
+                    try:
+                        connection.close()
+                    except Exception:
+                        pass
+
+                if not wifi.is_connected():
+                    _set_status_wifi_message(status_display, "")
+                    break
+
+                _sleep(config.RECONNECT_DELAY_S)
 
 
 if __name__ == "__main__":

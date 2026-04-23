@@ -107,11 +107,121 @@ class LcdHardwareIO(HardwareIO):
 class StatusDisplay:
     def __init__(self, renderer):
         self.renderer = renderer
+        self.wifi_message = "not connected"
+        self.beacon_message = "searching"
+        self.host_message = "not connected"
+        self.auto_select_message = "waiting for beacon"
+        self._wait_dots = {"wifi": 0, "beacon": 0, "host": 0}
+        self._wait_counts = {"wifi": 0, "beacon": 0, "host": 0}
+        self._rendered_lines = {}
+        self._init_screen()
+
+    def _init_screen(self):
+        self.renderer.clear(0x000000)
+        self._draw()
+
+    def _advance_wait(self, key):
+        dots = self._wait_dots[key] + 1
+        count = self._wait_counts[key]
+        if dots > 10:
+            dots = 1
+            count += 10
+        self._wait_dots[key] = dots
+        self._wait_counts[key] = count
+
+    def _reset_wait(self, key):
+        self._wait_dots[key] = 0
+        self._wait_counts[key] = 0
+
+    def _wait_suffix(self, key):
+        suffix = "." * self._wait_dots[key]
+        if self._wait_counts[key]:
+            return "%d %s" % (self._wait_counts[key], suffix)
+        return suffix
+
+    def _with_wait(self, label, key):
+        suffix = self._wait_suffix(key)
+        return "%s %s" % (label, suffix) if suffix else label
+
+    def _line(self, key, y, text, color):
+        text = str(text).upper()[:40]
+        previous = self._rendered_lines.get(key)
+        if previous == (text, color):
+            return False
+
+        clear_needed = True
+        if previous is not None:
+            old_text, old_color = previous
+            if color == old_color and text.startswith(old_text):
+                clear_needed = False
+
+        if clear_needed:
+            self.renderer.fill_rect(0, y - 2, 240, 20, 0x000000)
+
+        self.renderer.draw_text(4, y, text, color)
+        self._rendered_lines[key] = (text, color)
+        return True
+
+    def _draw(self):
+        changed = False
+        changed = self._line("wifi", 8, "WiFi: %s" % self.wifi_message, 0x7CFF9A if self.wifi_message.startswith("connected") else 0xFFD166) or changed
+        changed = self._line("beacon", 30, "Beacon: %s" % self.beacon_message, 0x57C7FF if self.beacon_message.startswith("found") else 0xFFFFFF) or changed
+        changed = self._line("host", 52, "Host: %s" % self.host_message, 0x7CFF9A if self.host_message.startswith("connected") else 0xFFFFFF) or changed
+        changed = self._line("auto_select", 74, "Auto-select: %s" % self.auto_select_message, 0xFFFFFF) or changed
+        if changed:
+            self.renderer.present()
+
+    def set_wifi_message(self, ssid):
+        if ssid:
+            self.wifi_message = "connected %s" % ssid
+            self._reset_wait("wifi")
+        else:
+            self.wifi_message = "not connected"
+            self._reset_wait("wifi")
+        self._draw()
 
     def show(self, state, detail=""):
-        self.renderer.clear(0x000000)
-        self.renderer.draw_text(10, 10, "STATE", 0xFFFFFF)
-        self.renderer.draw_text(10, 30, state, 0x57C7FF)
-        if detail:
-            self.renderer.draw_text(10, 50, detail[:40], 0xFFFFFF)
-        self.renderer.present()
+        if state == "CONNECTING_WIFI":
+            self._advance_wait("wifi")
+            self.wifi_message = self._with_wait(detail or "connecting", "wifi")
+            self.host_message = "not connected"
+            self.beacon_message = "searching"
+            self.auto_select_message = "waiting for beacon"
+        elif state == "BEACON_SEARCHING":
+            self._advance_wait("beacon")
+            self.beacon_message = self._with_wait("searching", "beacon")
+            self._advance_wait("host")
+            self.host_message = self._with_wait("not connected", "host")
+            self.auto_select_message = "waiting for beacon"
+        elif state == "BEACON_FOUND":
+            self._reset_wait("beacon")
+            self.beacon_message = "found %s" % detail if detail else "found"
+            self.host_message = self._with_wait("not connected", "host")
+            if self.auto_select_message == "waiting for beacon":
+                self.auto_select_message = ".......... 1010ms"
+        elif state == "AUTO_SELECT_COUNTDOWN":
+            remaining_ms = detail or "0"
+            try:
+                remaining_value = int(remaining_ms)
+            except ValueError:
+                remaining_value = 0
+            dots = int((remaining_value + 99) / 100) if remaining_value > 0 else 0
+            if dots < 0:
+                dots = 0
+            if dots > 10:
+                dots = 10
+            self._advance_wait("host")
+            self.host_message = self._with_wait("not connected", "host")
+            self.auto_select_message = "%s %sms" % ("." * dots, remaining_value)
+        elif state == "AUTO_SELECT_MULTIPLE":
+            self.auto_select_message = "multiple sessions"
+        elif state == "READY":
+            self._reset_wait("host")
+            self.host_message = "connected %s" % (detail or "ready")
+            self.auto_select_message = "complete"
+        elif state == "DISCONNECTED":
+            self._advance_wait("host")
+            self.host_message = self._with_wait("not connected", "host")
+            self.auto_select_message = "waiting for beacon"
+
+        self._draw()
