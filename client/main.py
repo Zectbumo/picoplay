@@ -17,14 +17,22 @@ def _sleep(seconds):
         time.sleep_ms(int(seconds * 1000))
 
 
-def _set_status_wifi_message(status_display, ssid):
+def _format_wifi_report(wifi_info):
+    return "ip=%s netmask=%s broadcast=%s" % (
+        wifi_info.get("ip", ""),
+        wifi_info.get("netmask", ""),
+        wifi_info.get("broadcast", ""),
+    )
+
+
+def _set_status_wifi_message(status_display, message):
     if hasattr(status_display, "set_wifi_message"):
-        status_display.set_wifi_message(ssid)
+        status_display.set_wifi_message(message)
         return
 
     # Allow older StatusDisplay implementations that only expose the backing
     # attribute so the connection loop still runs on partially updated clients.
-    status_display.wifi_message = "connected %s" % ssid if ssid else "not connected"
+    status_display.wifi_message = message or "not connected"
 
 
 def run():
@@ -39,7 +47,7 @@ def run():
     while True:
         try:
             wifi_info = wifi.connect(status_cb=status_cb)
-            _set_status_wifi_message(status_display, wifi_info.get("ssid", ""))
+            status_cb("WIFI_CONNECTED", _format_wifi_report(wifi_info))
         except Exception as exc:
             status_cb("DISCONNECTED", str(exc))
             _sleep(config.RECONNECT_DELAY_S)

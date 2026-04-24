@@ -166,8 +166,7 @@ proc encodeBeacon*(
   protocolVersion: uint16,
   serverUuid: UuidBytes,
   sessionUuid: UuidBytes,
-  tcpPort: uint16,
-  udpPort: uint16,
+  port: uint16,
   serverName: string
 ): string =
   result = newStringOfCap(64 + serverName.len)
@@ -176,19 +175,14 @@ proc encodeBeacon*(
   result.appendU16(protocolVersion)
   result.appendBytes(serverUuid)
   result.appendBytes(sessionUuid)
-  result.appendU16(tcpPort)
-  result.appendU16(udpPort)
+  result.appendU16(port)
   result.appendString(serverName)
 
-proc decodeClientHello*(payload: string): tuple[hasUuid: bool, clientUuid: UuidBytes, clientUdpPort: uint16] =
-  ## The README does not define how the server learns the client's UDP receive port.
-  ## This implementation appends `client_udp_port: u16` to ClientHello so per-client
-  ## frame state delivery is possible.
+proc decodeClientHello*(payload: string): tuple[hasUuid: bool, clientUuid: UuidBytes] =
   var offset = 0
   result.hasUuid = readBool(payload, offset)
   if result.hasUuid:
     result.clientUuid = readUuid(payload, offset)
-  result.clientUdpPort = readU16(payload, offset)
 
 proc decodeInputSnapshot*(payload: string): InputSnapshot =
   var offset = 0
@@ -203,8 +197,7 @@ proc encodeServerHello*(
   gameVersion: uint16,
   gameTitle: string,
   tickHz: uint16,
-  playerId: uint8,
-  udpPort: uint16
+  playerId: uint8
 ): string =
   result = newStringOfCap(64 + gameTitle.len)
   result.appendBytes(clientUuid)
@@ -213,7 +206,6 @@ proc encodeServerHello*(
   result.appendString(gameTitle)
   result.appendU16(tickHz)
   result.appendU8(playerId)
-  result.appendU16(udpPort)
 
 proc encodeAssetManifest*(entries: openArray[AssetEntry]): string =
   result = newStringOfCap(2 + entries.len * 15)

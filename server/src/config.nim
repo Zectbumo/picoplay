@@ -7,8 +7,8 @@ type
     protocolVersion*: uint16
     gameVersion*: uint16
     tickHz*: uint16
-    tcpPort*: uint16
-    udpPort*: uint16
+    port*: uint16
+    beaconPort*: uint16
     beaconIntervalMs*: int
     playerGraceMs*: int
     serverName*: string
@@ -17,11 +17,11 @@ type
     assetDir*: string
 
 proc defaultConfig*(): ServerConfig =
-  result.protocolVersion = 1
-  result.gameVersion = 1
+  result.protocolVersion = 2
+  result.gameVersion = 2
   result.tickHz = 30
-  result.tcpPort = 41010
-  result.udpPort = 37020
+  result.port = 41010
+  result.beaconPort = 37020
   result.beaconIntervalMs = 1000
   result.playerGraceMs = 5000
   result.serverName = "picoplay"

@@ -9,7 +9,6 @@ proc buildBeaconPayload*(
     cfg.protocolVersion,
     serverUuid,
     sessionUuid,
-    cfg.tcpPort,
-    cfg.udpPort,
+    cfg.port,
     cfg.serverName
   )

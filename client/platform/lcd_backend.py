@@ -144,49 +144,51 @@ class StatusDisplay:
         return "%s %s" % (label, suffix) if suffix else label
 
     def _line(self, key, y, text, color):
-        text = str(text).upper()[:40]
+        text = str(text).upper()
         previous = self._rendered_lines.get(key)
-        if previous == (text, color):
+        if previous == (y, text, color):
             return False
 
         clear_needed = True
         if previous is not None:
-            old_text, old_color = previous
-            if color == old_color and text.startswith(old_text):
+            old_y, old_text, old_color = previous
+            if old_y != y:
+                self.renderer.fill_rect(0, old_y - 2, 240, 20, 0x000000)
+            if old_y == y and color == old_color and text.startswith(old_text):
                 clear_needed = False
 
         if clear_needed:
             self.renderer.fill_rect(0, y - 2, 240, 20, 0x000000)
 
         self.renderer.draw_text(4, y, text, color)
-        self._rendered_lines[key] = (text, color)
+        self._rendered_lines[key] = (y, text, color)
         return True
 
     def _draw(self):
         changed = False
-        changed = self._line("wifi", 8, "WiFi: %s" % self.wifi_message, 0x7CFF9A if self.wifi_message.startswith("connected") else 0xFFD166) or changed
+        wifi_color = 0x7CFF9A if self.wifi_message.startswith("ip=") else 0xFFD166
+        changed = self._line("wifi", 8, self.wifi_message, wifi_color) or changed
         changed = self._line("beacon", 30, "Beacon: %s" % self.beacon_message, 0x57C7FF if self.beacon_message.startswith("found") else 0xFFFFFF) or changed
         changed = self._line("host", 52, "Host: %s" % self.host_message, 0x7CFF9A if self.host_message.startswith("connected") else 0xFFFFFF) or changed
         changed = self._line("auto_select", 74, "Auto-select: %s" % self.auto_select_message, 0xFFFFFF) or changed
         if changed:
             self.renderer.present()
 
-    def set_wifi_message(self, ssid):
-        if ssid:
-            self.wifi_message = "connected %s" % ssid
-            self._reset_wait("wifi")
-        else:
-            self.wifi_message = "not connected"
-            self._reset_wait("wifi")
+    def set_wifi_message(self, message):
+        self.wifi_message = message or "not connected"
+        self._reset_wait("wifi")
         self._draw()
 
     def show(self, state, detail=""):
         if state == "CONNECTING_WIFI":
             self._advance_wait("wifi")
-            self.wifi_message = self._with_wait(detail or "connecting", "wifi")
+            self.wifi_message = "WiFi: %s" % self._with_wait(detail or "connecting", "wifi")
             self.host_message = "not connected"
             self.beacon_message = "searching"
             self.auto_select_message = "waiting for beacon"
+        elif state == "WIFI_CONNECTED":
+            self._reset_wait("wifi")
+            self.wifi_message = detail or "connected"
         elif state == "BEACON_SEARCHING":
             self._advance_wait("beacon")
             self.beacon_message = self._with_wait("searching", "beacon")

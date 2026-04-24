@@ -35,16 +35,13 @@ def recv_packet(sock):
     return packet_type, recv_exact(sock, payload_len)
 
 
-def encode_client_hello(client_uuid, client_udp_port):
-    # The README does not define how the server learns the client's UDP port.
-    # This implementation appends `client_udp_port: u16` to ClientHello.
+def encode_client_hello(client_uuid):
     payload = bytearray()
     if client_uuid:
-      payload.extend(struct.pack(">B", 1))
-      payload.extend(client_uuid)
+        payload.extend(struct.pack(">B", 1))
+        payload.extend(client_uuid)
     else:
-      payload.extend(struct.pack(">B", 0))
-    payload.extend(struct.pack(">H", client_udp_port))
+        payload.extend(struct.pack(">B", 0))
     return pack_packet(PACKET_CLIENT_HELLO, bytes(payload))
 
 
@@ -94,7 +91,6 @@ def decode_server_hello(payload):
     tick_hz, offset = _read_u16(payload, offset)
     player_id = payload[offset]
     offset += 1
-    udp_port, offset = _read_u16(payload, offset)
     return {
         "client_uuid": client_uuid,
         "session_uuid": session_uuid,
@@ -102,7 +98,6 @@ def decode_server_hello(payload):
         "game_title": game_title,
         "tick_hz": tick_hz,
         "player_id": player_id,
-        "udp_port": udp_port,
     }
 
 
@@ -149,16 +144,14 @@ def decode_beacon(payload):
     offset += 16
     session_uuid = payload[offset : offset + 16]
     offset += 16
-    tcp_port, offset = _read_u16(payload, offset)
-    udp_port, offset = _read_u16(payload, offset)
+    port, offset = _read_u16(payload, offset)
     server_name, offset = _read_string(payload, offset)
     return {
         "magic": magic,
         "protocol_version": protocol_version,
         "server_uuid": server_uuid,
         "session_uuid": session_uuid,
-        "tcp_port": tcp_port,
-        "udp_port": udp_port,
+        "port": port,
         "server_name": server_name,
     }
 

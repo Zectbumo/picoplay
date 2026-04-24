@@ -41,6 +41,8 @@ def discover(timeout_ms=None, status_cb=None):
     sessions = {}
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    if hasattr(socket, "SO_BROADCAST"):
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
     sock.bind(("", config.BEACON_PORT))
     poller = select.poll() if hasattr(select, "poll") else None
     if poller is not None:

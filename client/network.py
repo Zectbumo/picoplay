@@ -48,14 +48,14 @@ class SessionConnection:
 def open_session(session_info, status_cb=None):
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    udp_sock.bind(("", config.CLIENT_UDP_PORT))
+    udp_sock.bind(("", 0))
 
     tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     tcp_sock.settimeout(config.TCP_CONNECT_TIMEOUT_S)
-    tcp_sock.connect((session_info["address"], session_info["tcp_port"]))
+    tcp_sock.connect((session_info["address"], session_info["port"]))
 
     client_uuid = config.load_client_uuid()
-    tcp_sock.sendall(protocol.encode_client_hello(client_uuid, config.CLIENT_UDP_PORT))
+    tcp_sock.sendall(protocol.encode_client_hello(client_uuid))
 
     packet_type, payload = protocol.recv_packet(tcp_sock)
     if packet_type != protocol.PACKET_SERVER_HELLO:
@@ -63,6 +63,7 @@ def open_session(session_info, status_cb=None):
 
     server_hello = protocol.decode_server_hello(payload)
     config.save_client_uuid(server_hello["client_uuid"])
+    udp_sock.sendto(server_hello["client_uuid"], (session_info["address"], session_info["port"]))
     assets.sync_from_control_socket(tcp_sock, status_cb=status_cb)
     tcp_sock.settimeout(None)
     return SessionConnection(tcp_sock, udp_sock, server_hello, session_info["address"])

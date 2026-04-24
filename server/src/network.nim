@@ -9,6 +9,7 @@ type
     uuidKey: string
     remoteAddress: string
     clientUdpPort: uint16
+    udpRegistered: bool
     playerId: uint8
     latestInput: InputSnapshot
     connected: bool
@@ -18,8 +19,9 @@ type
     cfg*: ServerConfig
     serverUuid*: UuidBytes
     sessionUuid*: UuidBytes
-    listenSocket*: AsyncSocket
+    tcpSocket*: AsyncSocket
     udpSocket*: AsyncSocket
+    beaconSocket*: AsyncSocket
     assetStore*: AssetStore
     gameState*: GameState
     stateSequence*: uint32
@@ -67,7 +69,7 @@ proc attachClient(
   server: Server,
   socket: AsyncSocket,
   remoteAddress: string,
-  hello: tuple[hasUuid: bool, clientUuid: UuidBytes, clientUdpPort: uint16]
+  hello: tuple[hasUuid: bool, clientUuid: UuidBytes]
 ): ClientConnection =
   let assignedUuid = if hello.hasUuid: hello.clientUuid else: randomUuid()
   let uuidKey = uuidToHex(assignedUuid)
@@ -81,7 +83,8 @@ proc attachClient(
 
   result.socket = socket
   result.remoteAddress = remoteAddress
-  result.clientUdpPort = hello.clientUdpPort
+  result.clientUdpPort = 0
+  result.udpRegistered = false
   result.playerId = assignedPlayer
   result.connected = true
   result.reservedUntilMs = 0
@@ -108,8 +111,7 @@ proc handleClient(server: Server, socket: AsyncSocket) {.async.} =
       server.cfg.gameVersion,
       server.cfg.gameTitle,
       server.cfg.tickHz,
-      attached.playerId,
-      server.cfg.udpPort
+      attached.playerId
     )
     await sendPacket(socket, PacketServerHello, helloPayload)
     await server.syncAssets(attached)
@@ -130,14 +132,27 @@ proc handleClient(server: Server, socket: AsyncSocket) {.async.} =
 
 proc acceptLoop(server: Server) {.async.} =
   while true:
-    let client = await server.listenSocket.accept()
+    let client = await server.tcpSocket.accept()
     asyncCheck server.handleClient(client)
 
 proc beaconLoop(server: Server) {.async.} =
   let payload = buildBeaconPayload(server.cfg, server.serverUuid, server.sessionUuid)
   while true:
-    await server.udpSocket.sendTo("255.255.255.255", Port(server.cfg.udpPort), payload)
+    await server.beaconSocket.sendTo("255.255.255.255", Port(server.cfg.beaconPort), payload)
     await sleepAsync(server.cfg.beaconIntervalMs)
+
+proc udpRegisterLoop(server: Server) {.async.} =
+  while true:
+    let packet = await server.udpSocket.recvFrom(1024)
+    if packet.data.len != 16:
+      continue
+
+    var offset = 0
+    let uuidKey = uuidToHex(readUuid(packet.data, offset))
+    if server.clients.hasKey(uuidKey):
+      server.clients[uuidKey].remoteAddress = packet.address
+      server.clients[uuidKey].clientUdpPort = uint16(packet.port)
+      server.clients[uuidKey].udpRegistered = true
 
 proc gameLoop(server: Server) {.async.} =
   let tickDelay = max(1, int(1000 div server.cfg.tickHz))
@@ -147,7 +162,7 @@ proc gameLoop(server: Server) {.async.} =
     var inputs = initTable[uint8, InputSnapshot]()
     var playerIds: seq[uint8] = @[]
     for client in server.activeClients():
-      if client.playerId == 0:
+      if client.playerId == 0 or not client.udpRegistered:
         continue
       playerIds.add(client.playerId)
       inputs[client.playerId] = client.latestInput
@@ -156,7 +171,7 @@ proc gameLoop(server: Server) {.async.} =
     inc(server.stateSequence)
 
     for client in server.activeClients():
-      if client.playerId == 0:
+      if client.playerId == 0 or not client.udpRegistered:
         continue
       let frame = server.gameState.buildFrameState(client.playerId, server.stateSequence)
       let payload = encodeFrameState(frame)
@@ -174,20 +189,24 @@ proc runServer*(cfg: ServerConfig) =
     clients: initTable[string, ClientConnection]()
   )
 
-  server.listenSocket = newAsyncSocket()
-  server.listenSocket.setSockOpt(OptReuseAddr, true)
-  server.listenSocket.bindAddr(Port(cfg.tcpPort))
-  server.listenSocket.listen()
+  server.tcpSocket = newAsyncSocket()
+  server.tcpSocket.setSockOpt(OptReuseAddr, true)
+  server.tcpSocket.bindAddr(Port(cfg.port))
+  server.tcpSocket.listen()
 
   server.udpSocket = newAsyncSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
   server.udpSocket.setSockOpt(OptReuseAddr, true)
-  server.udpSocket.setSockOpt(OptBroadcast, true)
-  server.udpSocket.bindAddr(Port(cfg.udpPort))
+  server.udpSocket.bindAddr(Port(cfg.port))
 
-  echo &"picoplay server listening on tcp={cfg.tcpPort} udp={cfg.udpPort}"
+  server.beaconSocket = newAsyncSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+  server.beaconSocket.setSockOpt(OptReuseAddr, true)
+  server.beaconSocket.setSockOpt(OptBroadcast, true)
+
+  echo &"picoplay server listening on port={cfg.port} beacon={cfg.beaconPort}"
   echo &"session={uuidToHex(server.sessionUuid)} assets={server.assetStore.manifest.len}"
 
   asyncCheck server.acceptLoop()
   asyncCheck server.beaconLoop()
+  asyncCheck server.udpRegisterLoop()
   asyncCheck server.gameLoop()
   runForever()

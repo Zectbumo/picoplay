@@ -142,8 +142,7 @@ Beacon fields:
 - `protocol_version` (`u16`)
 - `server_uuid` (`16 bytes`)
 - `session_uuid` (`16 bytes`)
-- `tcp_port` (`u16`)
-- `udp_port` (`u16`)
+- `port` (`u16`)
 - `server_name` (string)
 
 Client accepts a beacon only if `magic` and `protocol_version` both match.
@@ -236,7 +235,6 @@ UDP packets use fixed binary layouts without stream framing.
 - `game_title` (string)
 - `tick_hz` (`u16`)
 - `player_id` (`u8`)
-- `udp_port` (`u16`)
 
 ### `AssetManifest`
 
@@ -254,6 +252,14 @@ UDP packets use fixed binary layouts without stream framing.
 - `size_bytes` (`u32`)
 - raw asset bytes
 
+## Client -> Server (`UDP`)
+
+### `UdpRegister`
+
+- `client_uuid` (`16 bytes`)
+
+The client sends `UdpRegister` from its UDP receive socket to the server `port`. The server uses the packet source address and source port for frame state delivery.
+
 ## Server -> Client (`UDP`)
 
 ### `Beacon`
@@ -262,8 +268,7 @@ UDP packets use fixed binary layouts without stream framing.
 - `protocol_version` (`u16`)
 - `server_uuid` (`16 bytes`)
 - `session_uuid` (`16 bytes`)
-- `tcp_port` (`u16`)
-- `udp_port` (`u16`)
+- `port` (`u16`)
 - `server_name` (string)
 
 ### `FrameState`
