@@ -347,11 +347,11 @@ server/
 client/
   boot.py
   main.py
-  config.py
-  wifi.py
-  beacon.py
-  network.py
-  assets.py
+    config.py
+    wifi.py
+    beacon.py
+    session.py
+    assets.py
   protocol.py
   platform/
     renderer.py

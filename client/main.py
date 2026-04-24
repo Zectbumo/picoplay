@@ -6,7 +6,7 @@ except ImportError:  # pragma: no cover - desktop fallback
 import config
 import wifi
 import beacon
-import network
+import session
 from platform.lcd_backend import LcdRenderer, LcdHardwareIO, StatusDisplay
 
 
@@ -64,7 +64,7 @@ def run():
                     continue
 
                 selected = sessions[0]
-                connection = network.open_session(selected, status_cb=status_cb)
+                connection = session.open_session(selected, status_cb=status_cb)
                 status_cb("READY", "player %d" % connection.server_hello["player_id"])
 
                 while True:
