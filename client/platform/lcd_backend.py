@@ -91,11 +91,6 @@ class LcdHardwareIO(HardwareIO):
             return
 
         try:
-            _lcd.lcd_rgb_led(outputs.get("neopixel_r", 0), outputs.get("neopixel_g", 0), outputs.get("neopixel_b", 0))
-        except Exception:
-            pass
-
-        try:
             if outputs.get("buzzer_mode"):
                 _lcd.lcd_start_tone(outputs.get("buzzer_freq_hz", 440), outputs.get("buzzer_duty", 0))
             else:

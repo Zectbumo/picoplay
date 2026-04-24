@@ -10,7 +10,7 @@ except ImportError:  # pragma: no cover - desktop fallback
 
 import config
 import protocol
-import assets
+import asset_store
 
 
 class SessionConnection:
@@ -48,7 +48,7 @@ class SessionConnection:
 def open_session(session_info, status_cb=None):
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    udp_sock.bind(("", 0))
+    udp_sock.bind(("0.0.0.0", 0))
 
     tcp_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     tcp_sock.settimeout(config.TCP_CONNECT_TIMEOUT_S)
@@ -64,6 +64,6 @@ def open_session(session_info, status_cb=None):
     server_hello = protocol.decode_server_hello(payload)
     config.save_client_uuid(server_hello["client_uuid"])
     udp_sock.sendto(server_hello["client_uuid"], (session_info["address"], session_info["port"]))
-    assets.sync_from_control_socket(tcp_sock, status_cb=status_cb)
+    asset_store.sync_from_control_socket(tcp_sock, status_cb=status_cb)
     tcp_sock.settimeout(None)
     return SessionConnection(tcp_sock, udp_sock, server_hello, session_info["address"])

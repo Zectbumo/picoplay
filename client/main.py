@@ -70,7 +70,6 @@ def run():
                 while True:
                     frame = connection.recv_frame(timeout_ms=100)
                     if frame is not None:
-                        renderer.clear(0x000000)
                         for command in frame["commands"]:
                             kind = command["kind"]
                             if kind == "fill_rect":

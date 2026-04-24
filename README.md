@@ -351,7 +351,7 @@ client/
     wifi.py
     beacon.py
     session.py
-    assets.py
+    asset_store.py
   protocol.py
   platform/
     renderer.py
@@ -392,10 +392,12 @@ The server stores its generated UUID in `server/server_uuid.txt` and serves asse
 # Sample Game
 
 - up to 4 players
-- top-down movement
-- joystick controls movement
-- button A triggers sound or flash
-- button B changes color
+- independent Tetris board per player
+- joystick left/right moves the falling piece
+- joystick down soft-drops
+- button A rotates
+- button B hard-drops
+- server sends a full board on first draw, then only dirty cells and HUD updates
 
 ---
 

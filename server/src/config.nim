@@ -17,8 +17,8 @@ type
     assetDir*: string
 
 proc defaultConfig*(): ServerConfig =
-  result.protocolVersion = 2
-  result.gameVersion = 2
+  result.protocolVersion = 1
+  result.gameVersion = 1
   result.tickHz = 30
   result.port = 41010
   result.beaconPort = 37020
