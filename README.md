@@ -363,6 +363,8 @@ client/
 
 # Server Build And Run
 
+The Nim server can run on Windows, macOS, and OpenBSD. UDP discovery calculates directed subnet broadcast addresses from the local IPv4 address and netmask.
+
 From the repo root:
 
 Debug build:

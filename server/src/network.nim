@@ -1,4 +1,4 @@
-import std/[asyncdispatch, asyncnet, net, tables, times, sets, strformat]
+import std/[asyncdispatch, asyncnet, net, osproc, tables, times, sets, strformat, strutils]
 
 import config, protocol, assets, game, beacon
 
@@ -29,6 +29,82 @@ type
 
 proc nowMs(): int64 =
   int64(epochTime() * 1000)
+
+proc parseIpv4Address(value: string, address: var IpAddress): bool =
+  try:
+    address = parseIpAddress(value.strip())
+    address.family == IpAddressFamily.IPv4
+  except ValueError:
+    false
+
+proc parseNetmask(value: string, mask: var IpAddress): bool =
+  let trimmed = value.strip()
+  if not trimmed.startsWith("0x"):
+    return parseIpv4Address(trimmed, mask)
+
+  try:
+    let hexMask = uint32(parseHexInt(trimmed[2 .. ^1]))
+    mask = IpAddress(family: IpAddressFamily.IPv4)
+    for i in 0 ..< 4:
+      mask.address_v4[i] = uint8((hexMask shr uint((3 - i) * 8)) and 0xff'u32)
+    true
+  except ValueError:
+    false
+
+proc addBroadcastAddress(addresses: var seq[IpAddress], ip: IpAddress, mask: IpAddress) =
+  if ip == IPv4_any() or ip == IPv4_loopback():
+    return
+
+  var broadcast = IpAddress(family: IpAddressFamily.IPv4)
+  for i in 0 ..< 4:
+    broadcast.address_v4[i] = ip.address_v4[i] or not mask.address_v4[i]
+
+  if broadcast notin addresses:
+    addresses.add(broadcast)
+
+proc parseWindowsBroadcastAddresses(output: string): seq[IpAddress] {.used.} =
+  var
+    currentIp = IpAddress(family: IpAddressFamily.IPv4)
+    hasCurrentIp = false
+
+  for rawLine in output.splitLines():
+    let line = rawLine.strip()
+    if line.startsWith("IPv4 Address") or line.startsWith("IP Address"):
+      let pieces = line.split(":", maxsplit = 1)
+      if pieces.len == 2:
+        let ipTokens = pieces[1].splitWhitespace()
+        if ipTokens.len > 0:
+          hasCurrentIp = parseIpv4Address(ipTokens[0], currentIp)
+    elif line.startsWith("Subnet Mask") and hasCurrentIp:
+      let pieces = line.split(":", maxsplit = 1)
+      if pieces.len == 2:
+        var mask = IpAddress(family: IpAddressFamily.IPv4)
+        if parseIpv4Address(pieces[1].strip(), mask):
+          result.addBroadcastAddress(currentIp, mask)
+      hasCurrentIp = false
+
+proc parseIfconfigBroadcastAddresses(output: string): seq[IpAddress] {.used.} =
+  for rawLine in output.splitLines():
+    let tokens = rawLine.strip().splitWhitespace()
+    let inetIndex = tokens.find("inet")
+    let maskIndex = tokens.find("netmask")
+    if inetIndex < 0 or maskIndex < 0 or inetIndex + 1 >= tokens.len or maskIndex + 1 >= tokens.len:
+      continue
+
+    var
+      ip = IpAddress(family: IpAddressFamily.IPv4)
+      mask = IpAddress(family: IpAddressFamily.IPv4)
+    if parseIpv4Address(tokens[inetIndex + 1], ip) and parseNetmask(tokens[maskIndex + 1], mask):
+      result.addBroadcastAddress(ip, mask)
+
+proc localBroadcastAddresses(): seq[IpAddress] =
+  try:
+    when defined(windows):
+      parseWindowsBroadcastAddresses(execProcess("ipconfig"))
+    else:
+      parseIfconfigBroadcastAddresses(execProcess("ifconfig"))
+  except CatchableError:
+    @[]
 
 proc activeClients(server: Server): seq[ClientConnection] =
   for client in server.clients.values:
@@ -138,7 +214,9 @@ proc acceptLoop(server: Server) {.async.} =
 proc beaconLoop(server: Server) {.async.} =
   let payload = buildBeaconPayload(server.cfg, server.serverUuid, server.sessionUuid)
   while true:
-    await server.beaconSocket.sendTo("255.255.255.255", Port(server.cfg.beaconPort), payload)
+    let broadcastAddresses = localBroadcastAddresses()
+    for address in broadcastAddresses:
+      discard server.beaconSocket.sendTo($address, Port(server.cfg.beaconPort), payload)
     await sleepAsync(server.cfg.beaconIntervalMs)
 
 proc udpRegisterLoop(server: Server) {.async.} =
